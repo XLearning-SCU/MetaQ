@@ -194,8 +194,10 @@ def plot_metacell_size(adata, save_name, bins=50):
 
 
 def plot_celltype_purity(adata, annotations, save_name):
-    celltypes, class_size = np.unique(annotations, return_counts=True)
-    celltype2int = {celltype: i for i, celltype in enumerate(celltypes)}
+    annotations = pd.Series(annotations, index=adata.obs_names, dtype=object)
+    type_counts = annotations.value_counts(sort=False)
+    celltypes = type_counts.index.to_numpy()
+    class_size = type_counts.to_numpy()
 
     assignments = adata.obs["metacell"]
     assignment_ids = np.unique(assignments)
@@ -206,32 +208,32 @@ def plot_celltype_purity(adata, annotations, save_name):
         majority_type = annotations[idx].value_counts().idxmax()
         majority_type_pred[idx] = majority_type
 
-    annotations_int = np.array([celltype2int[celltype] for celltype in annotations])
-    majority_type_pred_int = np.array(
-        [celltype2int[celltype] for celltype in majority_type_pred]
+    label_codes, _ = pd.factorize(
+        pd.concat([annotations, majority_type_pred], ignore_index=True)
     )
+    annotations_int = label_codes[: len(annotations)]
+    majority_type_pred_int = label_codes[len(annotations) :]
     balanced_acc = balanced_accuracy_score(annotations_int, majority_type_pred_int)
     print("* Balanced Cell Type Purity:", balanced_acc)
-
-    data = pd.DataFrame(columns=["Cell Type", "Prediction by Majority", "Fraction"])
 
     sorted_indices = np.argsort(class_size)[::-1]
     sorted_celltypes = celltypes[sorted_indices]
 
+    rows = []
     for type in celltypes:
         type_idx = annotations == type
         preds = majority_type_pred[type_idx]
         for type_ in celltypes:
             total_number = (preds == type_).sum()
             frac = total_number / type_idx.sum()
-            data = data.append(
+            rows.append(
                 {
                     "Cell Type": type,
                     "Prediction by Majority": type_,
                     "Fraction": frac,
-                },
-                ignore_index=True,
+                }
             )
+    data = pd.DataFrame(rows)
     data["Cell Type"] = pd.CategoricalIndex(
         data["Cell Type"], categories=sorted_celltypes
     )
@@ -241,7 +243,9 @@ def plot_celltype_purity(adata, annotations, save_name):
         categories=sorted_celltypes,
     )
     data.sort_values("Prediction by Majority")
-    data = data.pivot("Cell Type", "Prediction by Majority", "Fraction")
+    data = data.pivot(
+        index="Cell Type", columns="Prediction by Majority", values="Fraction"
+    )
     data = data.fillna(0)
 
     plt.figure(figsize=(7.3, 7), dpi=300)
@@ -262,20 +266,20 @@ def plot_celltype_purity(adata, annotations, save_name):
     plt.savefig("./figures/" + save_name + "_purity_heatmap.png", transparent=False)
     plt.close()
 
-    data = pd.DataFrame(columns=["Cell Type", "Metacell Purity"])
     purities = []
+    rows = []
     for i in assignment_ids:
         idx = assignments == i
         majority_type = annotations[idx].value_counts().idxmax()
         purity = np.sum(annotations[idx] == majority_type) / len(annotations[idx])
         purities.append(purity)
-        data = data.append(
+        rows.append(
             {
                 "Cell Type": majority_type,
                 "Metacell Purity": purity,
-            },
-            ignore_index=True,
+            }
         )
+    data = pd.DataFrame(rows)
     avg_purity = data["Metacell Purity"].mean()
     print("* Average Cell Type Purity:", avg_purity)
     np.savetxt("./save/" + save_name + "_purity.txt", np.array(purities))

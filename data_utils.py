@@ -36,37 +36,39 @@ class MetaQDataset(Dataset):
 
 
 def preprocess(adata, data_type):
-    if isinstance(adata.X, sparse.csr_matrix) or isinstance(adata.X, sparse.csc_matrix):
-        adata.X = adata.X.toarray()
     raw = adata.X.copy()
 
     if data_type == "RNA":
         sc.pp.normalize_total(adata, target_sum=1e4)
-        sf = np.array((raw.sum(axis=1) / 1e4).tolist()).reshape(-1, 1)
+        sf = np.asarray(raw.sum(axis=1)).reshape(-1, 1) / 1e4
         sc.pp.log1p(adata)
         adata_ = adata.copy()
         if adata.shape[1] < 5000:
             sc.pp.highly_variable_genes(adata, n_top_genes=3000)
         else:
             sc.pp.highly_variable_genes(adata)
-        hvg_index = adata.var["highly_variable"].values
+        hvg_index = adata.var["highly_variable"].to_numpy(copy=True)
         raw = raw[:, hvg_index]
-        adata = adata[:, hvg_index]
+        adata = adata[:, hvg_index].copy()
     elif data_type == "ADT":
         sc.pp.normalize_total(adata, target_sum=1e4)
-        sf = np.array((raw.sum(axis=1) / 1e4).tolist()).reshape(-1, 1)
+        sf = np.asarray(raw.sum(axis=1)).reshape(-1, 1) / 1e4
         sc.pp.log1p(adata)
         adata_ = adata.copy()
     elif data_type == "ATAC":
         sc.pp.normalize_total(adata, target_sum=1e4)
-        sf = np.array((raw.sum(axis=1) / 1e4).tolist()).reshape(-1, 1)
+        sf = np.asarray(raw.sum(axis=1)).reshape(-1, 1) / 1e4
         sc.pp.log1p(adata)
         adata_ = adata.copy()
         sc.pp.highly_variable_genes(adata, n_top_genes=30000)
-        hvg_index = adata.var["highly_variable"].values
+        hvg_index = adata.var["highly_variable"].to_numpy(copy=True)
         raw = raw[:, hvg_index]
-        adata = adata[:, hvg_index]
+        adata = adata[:, hvg_index].copy()
 
+    if sparse.issparse(raw):
+        raw = raw.toarray()
+    if sparse.issparse(adata.X):
+        adata.X = adata.X.toarray()
     sc.pp.scale(adata, max_value=10)
     x = adata.X
 
@@ -100,12 +102,13 @@ def load_data(args):
     dataset = MetaQDataset(x_list, sf_list, raw_list)
     if args.metacell_num > 1000 and args.batch_size <= 512:
         args.batch_size = 4096
+    num_workers = getattr(args, "num_workers", 0)
     dataloader_train = DataLoader(
         dataset=dataset,
         batch_size=args.batch_size,
         shuffle=True,
         drop_last=True,
-        num_workers=4,
+        num_workers=num_workers,
         pin_memory=True,
     )
     dataloader_eval = DataLoader(
@@ -113,7 +116,7 @@ def load_data(args):
         batch_size=args.batch_size * 4,
         shuffle=False,
         drop_last=False,
-        num_workers=4,
+        num_workers=num_workers,
     )
 
     input_dims = [x.shape[1] for x in x_list]
@@ -127,10 +130,22 @@ def compute_metacell(adata, meta_ids, args):
     non_empty_metacell[np.unique(meta_ids)] = True
 
     data = adata.X
-    data_meta = np.stack(
-        [data[meta_ids == i].mean(axis=0) for i in range(meta_ids.max() + 1)]
-    )
-    data_meta = data_meta[non_empty_metacell]
+    if sparse.issparse(data):
+        cell_ids = np.arange(meta_ids.size)
+        membership = sparse.csr_matrix(
+            (np.ones(meta_ids.size, dtype=data.dtype), (meta_ids, cell_ids)),
+            shape=(meta_ids.max() + 1, meta_ids.size),
+        )
+        metacell_sizes = np.bincount(meta_ids, minlength=meta_ids.max() + 1)
+        data_meta = membership @ data
+        inverse_sizes = (1 / metacell_sizes[non_empty_metacell]).astype(data.dtype)
+        data_meta = sparse.diags(inverse_sizes) @ data_meta[non_empty_metacell]
+        data_meta = data_meta.toarray()
+    else:
+        data_meta = np.stack(
+            [data[meta_ids == i].mean(axis=0) for i in range(meta_ids.max() + 1)]
+        )
+        data_meta = data_meta[non_empty_metacell]
     metacell_adata = sc.AnnData(data_meta)
 
     if args.type_key in adata.obs_keys():

@@ -153,13 +153,14 @@ def main(args):
     plot_metacell_size(adata, fig_save_name)
     if args.type_key in adata.obs_keys():
         plot_celltype_purity(adata, adata.obs[args.type_key], fig_save_name)
-    for i in range(omics_num):
-        plot_compactness_separation(
-            dataloader_train.dataset.raw_list[i].numpy(),
-            adata,
-            fig_save_name + "_" + args.data_type[i],
-            omics_num > 1,
-        )
+    if not getattr(args, "skip_pairwise_metrics", False):
+        for i in range(omics_num):
+            plot_compactness_separation(
+                dataloader_train.dataset.raw_list[i].numpy(),
+                adata,
+                fig_save_name + "_" + args.data_type[i],
+                omics_num > 1,
+            )
 
     print("======= Inference Done =======")
 
@@ -185,6 +186,8 @@ if __name__ == "__main__":
     )
     parser.add_argument("--train_epoch", type=int, default=300)
     parser.add_argument("--batch_size", type=int, default=512)
+    parser.add_argument("--num_workers", type=int, default=0)
+    parser.add_argument("--skip_pairwise_metrics", action="store_true")
     parser.add_argument("--converge_threshold", type=int, default=10)
     parser.add_argument("--random_seed", type=int, default=1)
     parser.add_argument("--device", type=str, default="cuda")

@@ -8,8 +8,9 @@ This is the implementation of the paper "MetaQ: fast, scalable and accurate meta
 
 Our MetaQ algorithm is implemented in Python, with the following package dependencies.
 
-- pytorch=2.1.1
+- torch>=2.1
 - numpy=1.26.0
+- pandas<3
 - alive-progress=3.1.5
 - scanpy=1.9.6
 - scipy=1.11.3
@@ -93,6 +94,8 @@ In addition to the above arguments, which must be provided to perform metacell i
 - `--codebook_init ["Random", "Kmeans", "Geometric"]` (Default="Random") the codebook initialization strategy, where "Geometric" denotes initializing codebook entries using the [Geometric sketching](https://github.com/brianhie/geosketch) algorithm.
 - `--train_epoch [int]` (Default=300) the training epochs.
 - `--batch_size [int]` (Default=512) the size of mini-batch.
+- `--num_workers [int]` (Default=0) the number of DataLoader worker processes. Increase it when running from a script protected by an `if __name__ == "__main__":` guard.
+- `--skip_pairwise_metrics` skips the quadratic-memory compactness and separation evaluation. Use this for large datasets.
 - `--converge_threshold [int]` (Default=10) early stop training when the losses are stable for several consecutive epochs.
 - `--random_seed [int]` (Default=1) the random seed.
 
