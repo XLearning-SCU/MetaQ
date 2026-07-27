@@ -28,6 +28,14 @@ def main(args):
 
     adata_list, dataloader_train, dataloader_eval, input_dims = load_data(args)
     omics_num = len(adata_list)
+    streaming = getattr(dataloader_train, "backed", False)
+    skip_pairwise_metrics = getattr(args, "skip_pairwise_metrics", False)
+    skip_visualization = getattr(args, "skip_visualization", False)
+    if streaming and not skip_pairwise_metrics:
+        raise ValueError(
+            "Zarr streaming requires --skip_pairwise_metrics because the "
+            "pairwise correlation matrix is not out-of-core"
+        )
 
     print("Target metacell number:", args.metacell_num)
 
@@ -129,38 +137,45 @@ def main(args):
     adata = sc.AnnData(embeds, dtype=np.float32)
     adata.obs["metacell"] = ids
     if args.type_key in adata_list[0].obs_keys():
-        adata.obs[args.type_key] = adata_list[0].obs[args.type_key]
-    sc.set_figure_params(figsize=(7, 7), dpi=300)
-    sc.pp.neighbors(adata, use_rep="X", metric="cosine")
-    sc.tl.umap(adata)
-    if args.type_key in adata.obs_keys():
-        sc.pl.umap(
-            adata,
-            color=[args.type_key],
-            save="_" + args.save_name + "_embedding.png",
-            palette=sns.color_palette(
-                "husl", np.unique(adata.obs[args.type_key].values).size
-            ),
-            show=False,
-        )
-    rcParams.update(matplotlib.rcParamsDefault)
+        if streaming:
+            adata.obs[args.type_key] = np.asarray(
+                adata_list[0].get_obs_column(args.type_key)
+            )
+        else:
+            adata.obs[args.type_key] = adata_list[0].obs[args.type_key]
+    if not skip_visualization:
+        sc.set_figure_params(figsize=(7, 7), dpi=300)
+        sc.pp.neighbors(adata, use_rep="X", metric="cosine")
+        sc.tl.umap(adata)
+        if args.type_key in adata.obs_keys():
+            sc.pl.umap(
+                adata,
+                color=[args.type_key],
+                save="_" + args.save_name + "_embedding.png",
+                palette=sns.color_palette(
+                    "husl", np.unique(adata.obs[args.type_key].values).size
+                ),
+                show=False,
+            )
+        rcParams.update(matplotlib.rcParamsDefault)
     adata.write_h5ad(assignment_path)
     print("Metacell assignment saved at:", assignment_path)
     print("")
 
-    fig_save_name = args.save_name + "_" + str(args.metacell_num) + "metacell"
-    plot_metacell_umap(adata, fig_save_name)
-    plot_metacell_size(adata, fig_save_name)
-    if args.type_key in adata.obs_keys():
-        plot_celltype_purity(adata, adata.obs[args.type_key], fig_save_name)
-    if not getattr(args, "skip_pairwise_metrics", False):
-        for i in range(omics_num):
-            plot_compactness_separation(
-                dataloader_train.dataset.raw_list[i].numpy(),
-                adata,
-                fig_save_name + "_" + args.data_type[i],
-                omics_num > 1,
-            )
+    if not skip_visualization:
+        fig_save_name = args.save_name + "_" + str(args.metacell_num) + "metacell"
+        plot_metacell_umap(adata, fig_save_name)
+        plot_metacell_size(adata, fig_save_name)
+        if args.type_key in adata.obs_keys():
+            plot_celltype_purity(adata, adata.obs[args.type_key], fig_save_name)
+        if not skip_pairwise_metrics:
+            for i in range(omics_num):
+                plot_compactness_separation(
+                    dataloader_train.dataset.raw_list[i].numpy(),
+                    adata,
+                    fig_save_name + "_" + args.data_type[i],
+                    omics_num > 1,
+                )
 
     print("======= Inference Done =======")
 
@@ -188,6 +203,9 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--skip_pairwise_metrics", action="store_true")
+    parser.add_argument("--skip_visualization", action="store_true")
+    parser.add_argument("--chunk_size", type=int, default=5000)
+    parser.add_argument("--cache_path", type=str, default=None)
     parser.add_argument("--converge_threshold", type=int, default=10)
     parser.add_argument("--random_seed", type=int, default=1)
     parser.add_argument("--device", type=str, default="cuda")

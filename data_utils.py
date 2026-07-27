@@ -3,6 +3,12 @@ import numpy as np
 import scanpy as sc
 from scipy import sparse
 from torch.utils.data import Dataset, DataLoader
+from streaming_data import (
+    ZarrDataSource,
+    compute_metacell_zarr,
+    is_zarr_path,
+    load_zarr_data,
+)
 
 
 class MetaQDataset(Dataset):
@@ -76,6 +82,12 @@ def preprocess(adata, data_type):
 
 
 def load_data(args):
+    zarr_inputs = [is_zarr_path(path) for path in args.data_path]
+    if any(zarr_inputs):
+        if not all(zarr_inputs):
+            raise ValueError("All modalities must use the same storage backend")
+        return load_zarr_data(args)
+
     print("=======Loading and Preprocessing Data=======")
 
     num_omics = len(args.data_path)
@@ -125,6 +137,9 @@ def load_data(args):
 
 
 def compute_metacell(adata, meta_ids, args):
+    if isinstance(adata, ZarrDataSource):
+        return compute_metacell_zarr(adata, meta_ids, args)
+
     meta_ids = meta_ids.astype(int)
     non_empty_metacell = np.zeros(meta_ids.max() + 1).astype(bool)
     non_empty_metacell[np.unique(meta_ids)] = True

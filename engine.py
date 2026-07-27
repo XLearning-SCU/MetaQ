@@ -140,10 +140,29 @@ def inference(model, data_types, data_loader, device):
     model.eval()
 
     omics_num = model.omics_num
+    backed = getattr(data_loader, "backed", False)
 
-    embeds = []
-    ids = []
-    delta_confs = []
+    if backed:
+        output_prefix = data_loader.next_inference_prefix()
+        cell_num = data_loader.dataset.__len__()
+        ids = np.lib.format.open_memmap(
+            output_prefix + "_ids.npy",
+            mode="w+",
+            dtype=np.int32,
+            shape=(cell_num,),
+        )
+        delta_confs = np.lib.format.open_memmap(
+            output_prefix + "_delta_confs.npy",
+            mode="w+",
+            dtype=np.float32,
+            shape=(cell_num,),
+        )
+        embeds = None
+        offset = 0
+    else:
+        embeds = []
+        ids = []
+        delta_confs = []
     loss_rec_all = 0
     loss_rec_q_all = 0
     loss_c_all = 0
@@ -192,13 +211,39 @@ def inference(model, data_types, data_loader, device):
         else:
             hidden = hiddens[0]
 
-        embeds.append(hidden.detach().cpu().numpy())
-        ids.append(id.detach().cpu().numpy())
-        delta_confs.append(delta_conf.detach().cpu().numpy())
+        hidden_numpy = hidden.detach().cpu().numpy()
+        ids_numpy = id.detach().cpu().numpy()
+        delta_numpy = delta_conf.detach().cpu().numpy()
+        if backed:
+            if embeds is None:
+                embeds = np.lib.format.open_memmap(
+                    output_prefix + "_embeds.npy",
+                    mode="w+",
+                    dtype=np.float32,
+                    shape=(cell_num, hidden_numpy.shape[1]),
+                )
+            end = offset + hidden_numpy.shape[0]
+            embeds[offset:end] = hidden_numpy
+            ids[offset:end] = ids_numpy
+            delta_confs[offset:end] = delta_numpy
+            offset = end
+        else:
+            embeds.append(hidden_numpy)
+            ids.append(ids_numpy)
+            delta_confs.append(delta_numpy)
 
-    embeds = np.concatenate(embeds, axis=0)
-    ids = np.concatenate(ids, axis=0)
-    delta_confs = np.concatenate(delta_confs, axis=0)
+    if backed:
+        if offset != cell_num:
+            raise RuntimeError(
+                f"Inference produced {offset} cells, expected {cell_num}"
+            )
+        embeds.flush()
+        ids.flush()
+        delta_confs.flush()
+    else:
+        embeds = np.concatenate(embeds, axis=0)
+        ids = np.concatenate(ids, axis=0)
+        delta_confs = np.concatenate(delta_confs, axis=0)
 
     rec_q_percent = (loss_rec_all / loss_rec_q_all).item()
     loss_c_all = loss_c_all.item() / (

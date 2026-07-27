@@ -13,6 +13,9 @@ Our MetaQ algorithm is implemented in Python, with the following package depende
 - pandas<3
 - alive-progress=3.1.5
 - scanpy=1.9.6
+- anndata>=0.10
+- zarr<3
+- numcodecs
 - scipy=1.11.3
 - scikit-learn=1.1.3
 - faiss-gpu=1.7.4 (needed if using Kmeans initialization)
@@ -55,7 +58,7 @@ Note that to correctly install pytorch to enable GPU acceleration, we recommend 
 
 ### Input Data
 
-MetaQ accepts [AnnData](https://anndata.readthedocs.io/en/latest/index.html) in the `h5ad` format as input. To use MetaQ for metacell inference, run
+MetaQ accepts [AnnData](https://anndata.readthedocs.io/en/latest/index.html) in the `h5ad` or Zarr format as input. To use MetaQ for metacell inference, run
 
 ```bash
 python MetaQ.py --data_path $data_file_path --data_type $data_type --metacell_num $target_metacell_number --save_name $save_name
@@ -96,8 +99,34 @@ In addition to the above arguments, which must be provided to perform metacell i
 - `--batch_size [int]` (Default=512) the size of mini-batch.
 - `--num_workers [int]` (Default=0) the number of DataLoader worker processes. Increase it when running from a script protected by an `if __name__ == "__main__":` guard.
 - `--skip_pairwise_metrics` skips the quadratic-memory compactness and separation evaluation. Use this for large datasets.
+- `--skip_visualization` skips the full-cell neighbor graph, UMAP, and plotting. Use this for large datasets.
+- `--chunk_size [int]` (Default=5000) the number of consecutive cells processed from a Zarr input at a time.
+- `--cache_path [str]` stores the reusable raw-HVG training cache and disk-backed inference arrays for a Zarr input.
 - `--converge_threshold [int]` (Default=10) early stop training when the losses are stable for several consecutive epochs.
 - `--random_seed [int]` (Default=1) the random seed.
+
+For an atlas-scale Zarr input, use:
+
+```bash
+python MetaQ.py \
+  --data_path "./data/atlas.zarr" \
+  --data_type "RNA" \
+  --metacell_num 500 \
+  --save_name "Atlas" \
+  --cache_path "./cache/Atlas" \
+  --chunk_size 5000 \
+  --num_workers 0 \
+  --skip_pairwise_metrics \
+  --skip_visualization
+```
+
+The Zarr path keeps the original MetaQ preprocessing and training logic, while
+streaming raw counts into a reusable HVG cache. Every cell participates in each
+training epoch. Metacells are still computed as the mean of full-gene
+library-size-normalized and log-transformed expression, matching the in-memory
+path. RAM usage is bounded primarily by the chunk, batch, and final
+metacell-by-gene matrix; the reusable cache uses disk space proportional to
+cells multiplied by selected features.
 
 ### Output
 
